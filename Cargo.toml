@@ -1,8 +1,9 @@
 [package]
 name = "rsnow"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Justin Frank <justinpfrank@protonmail.com>"]
 
 [dependencies]
-ncurses = "5.97.0"
-rand = "0.5"
+# ncurses = "5.99.0"
+rand = "0.7"
+termion = "*"

@@ -1,77 +1,211 @@
-extern crate ncurses;
 extern crate rand;
+extern crate termion;
 
-use ncurses::*;
-use rand::{thread_rng, Rng};
-use std::{mem, str, thread, time};
+use rand::Rng;
+use std::io::{Read, Write};
+use std::{thread, time};
+use termion::raw::IntoRawMode;
+use termion::screen::*;
 
-fn main() {
-    initscr();
-    noecho();
-    cbreak();
-    curs_set(CURSOR_VISIBILITY::CURSOR_INVISIBLE);
-    nodelay(stdscr(), true);
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Snowflake {
+    Type1,
+    Type2,
+    Type3,
+}
 
-    let mut cols = 0;
-    let mut rows = 0;
-    getmaxyx(stdscr(), &mut rows, &mut cols);
+impl Snowflake {
+    fn create(variant: u8) -> Self {
+        match variant {
+            1 => Snowflake::Type1,
+            2 => Snowflake::Type2,
+            3 => Snowflake::Type3,
+            _ => panic!("Invalid snowflake"),
+        }
+    }
 
-    let mut cols = cols as usize;
-    let mut rows = rows as usize;
+    fn get_char(&self) -> char {
+        match self {
+            Snowflake::Type1 => '\u{2744}',
+            Snowflake::Type2 => '\u{2745}',
+            Snowflake::Type3 => '\u{2746}',
+        }
+    }
+}
 
-    let mut snow = vec![vec![' ' as u8; cols]; rows];
-    let mut updt = vec![vec![0 as u8; cols]; rows];
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Cell {
+    Empty,
+    Flake(Snowflake, u8),
+    Stack(u8),
+}
 
-    let mut rng = thread_rng();
+enum Action {
+    Nop,
+    Replace(Cell),
+    Move(Snowflake, usize),
+    Pile(u8, usize),
+}
 
-    let mut ch = getch();
-    while ch != 'q' as i32 {
-        let mut new_cols = 0;
-        let mut new_rows = 0;
-        getmaxyx(stdscr(), &mut new_rows, &mut new_cols);
-        if new_cols as usize != cols || new_rows as usize != rows {
-            cols = new_cols as usize;
-            rows = new_rows as usize;
-            snow = vec![vec![' ' as u8; cols]; rows];
-            updt = vec![vec![0 as u8; cols]; rows];
+struct Snow {
+    snow: Vec<Vec<Cell>>,
+    rows: u16,
+    cols: u16,
+}
+
+impl Snow {
+    pub fn create(rows: u16, cols: u16) -> Self {
+        Snow {
+            snow: vec![vec![Cell::Empty; cols as usize]; rows as usize],
+            rows: rows,
+            cols: cols,
+        }
+    }
+
+    fn update<R: Rng + ?Sized>(&mut self, rng: &mut R) -> () {
+        // check for snowflakes landing at the bottom
+        for cell in self.snow.last_mut().unwrap() {
+            match *cell {
+                Cell::Empty => (),
+                Cell::Flake(variant, float) => {
+                    if float == 0 {
+                        *cell = Cell::Stack(1);
+                    } else {
+                        *cell = Cell::Flake(variant, float - 1);
+                    }
+                }
+                Cell::Stack(_) => (),
+            }
         }
 
-        for row in (0..rows - 1).rev() {
-            for col in 0..cols {
-                let (from, to) = snow.split_at_mut(row + 1);
-                if from[row][col] == '*' as u8 {
-                    if updt[row][col] == 0 {
-                        if to[0][col] == ' ' as u8 {
-                            mem::swap(&mut from[row][col], &mut to[0][col]);
-                            updt[row + 1][col] = rng.gen_range(1, 4);
-                        } else if col != 0 && to[0][col - 1] == ' ' as u8 {
-                            mem::swap(&mut from[row][col], &mut to[0][col - 1]);
-                            updt[row + 1][col - 1] = rng.gen_range(1, 4);
-                        } else if col != cols - 1 && to[0][col + 1] == ' ' as u8 {
-                            mem::swap(&mut from[row][col], &mut to[0][col + 1]);
-                            updt[row + 1][col + 1] = rng.gen_range(1, 4);
+        fn get_action(cell: Cell, col: usize, to: &Vec<Cell>) -> Action {
+            match cell {
+                Cell::Empty => Action::Nop,
+                Cell::Flake(variant, float) => {
+                    if float == 0 {
+                        match to[col] {
+                            Cell::Empty => Action::Move(variant, col),
+                            Cell::Flake(_, _) => Action::Replace(Cell::Empty),
+                            Cell::Stack(height) => {
+                                if col > 0 && (to[col - 1] == Cell::Empty) {
+                                    Action::Move(variant, col - 1)
+                                } else if col < to.len() - 1 && (to[col + 1] == Cell::Empty) {
+                                    Action::Move(variant, col + 1)
+                                } else {
+                                    let mut piles = [9, height, 9];
+
+                                    if col > 0 {
+                                        if let Cell::Stack(zheight) = to[col - 1] {
+                                            piles[0] = zheight;
+                                        }
+                                    }
+                                    if col < to.len() - 1 {
+                                        if let Cell::Stack(zheight) = to[col + 1] {
+                                            piles[2] = zheight;
+                                        }
+                                    }
+
+                                    if piles[1] <= piles[0] && piles[1] <= piles[2] {
+                                        if height < 8 {
+                                            Action::Pile(height + 1, col)
+                                        } else {
+                                            Action::Replace(Cell::Stack(1))
+                                        }
+                                    } else if piles[2] <= piles[0] {
+                                        Action::Pile(piles[2] + 1, col + 1)
+                                    } else {
+                                        Action::Pile(piles[0] + 1, col - 1)
+                                    }
+                                }
+                            }
                         }
                     } else {
-                        updt[row][col] -= 1;
+                        Action::Replace(Cell::Flake(variant, float - 1))
+                    }
+                }
+                Cell::Stack(_) => Action::Nop,
+            }
+        }
+
+        // float snowflakes down the screen
+        for row in (0..(self.rows - 1) as usize).rev() {
+            for col in 0..self.cols as usize {
+                let (from, to) = self.snow.split_at_mut(row + 1);
+                match get_action(from[row][col], col, &to[0]) {
+                    Action::Nop => (),
+                    Action::Replace(new) => from[row][col] = new,
+                    Action::Move(variant, dest) => {
+                        from[row][col] = Cell::Empty;
+                        to[0][dest] = Cell::Flake(variant, rng.gen_range(1, 6));
+                    }
+                    Action::Pile(height, dest) => {
+                        from[row][col] = Cell::Empty;
+                        to[0][dest] = Cell::Stack(height);
                     }
                 }
             }
         }
 
-        for c in &mut snow[0] {
+        // generate new snowflakes at the top
+        for cell in self.snow.first_mut().unwrap() {
             if rng.gen_bool(1.0 / 500.0) {
-                *c = '*' as u8;
+                *cell = Cell::Flake(Snowflake::create(rng.gen_range(1, 4)), 0);
             }
         }
-
-        for i in 0..rows {
-            mvprintw(i as i32, 0, unsafe { str::from_utf8_unchecked(&snow[i]) });
-        }
-
-        refresh();
-        thread::sleep(time::Duration::from_millis(50));
-        ch = getch();
     }
 
-    endwin();
+    fn write<W: Write>(&self, screen: &mut W) {
+        for row in 0..self.rows {
+            let mut line = Vec::with_capacity(self.cols as usize);
+
+            for cell in &self.snow[row as usize] {
+                match cell {
+                    Cell::Empty => line.push(' '),
+                    Cell::Flake(variant, _) => line.push(variant.get_char()),
+                    Cell::Stack(height) => line.push(match height {
+                        1 => '\u{2581}',
+                        2 => '\u{2582}',
+                        3 => '\u{2583}',
+                        4 => '\u{2584}',
+                        5 => '\u{2585}',
+                        6 => '\u{2586}',
+                        7 => '\u{2587}',
+                        8 => '\u{2588}',
+                        _ => panic!("Invalid snowstack height"),
+                    }),
+                }
+            }
+
+            let s: String = line.into_iter().collect();
+            write!(screen, "{}{}", termion::cursor::Goto(1, row + 1), s).unwrap();
+        }
+        screen.flush().unwrap();
+    }
+}
+
+fn main() {
+    let mut stdin = termion::async_stdin().bytes();
+    let mut screen = AlternateScreen::from(std::io::stdout().into_raw_mode().unwrap());
+    write!(screen, "{}", termion::cursor::Hide).unwrap();
+    write!(screen, "{}", termion::clear::All).unwrap();
+
+    let (cols, rows) = termion::terminal_size().unwrap();
+
+    let mut snow = Snow::create(rows, cols);
+
+    let mut rng = rand::thread_rng();
+
+    loop {
+        let b = stdin.next();
+        if let Some(Ok(b'q')) = b {
+            break;
+        }
+
+        snow.update(&mut rng);
+        snow.write(&mut screen);
+
+        thread::sleep(time::Duration::from_millis(50));
+    }
+
+    write!(screen, "{}", termion::cursor::Show).unwrap();
 }
