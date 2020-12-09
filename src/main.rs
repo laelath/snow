@@ -56,7 +56,7 @@ struct Snow {
 impl Snow {
     pub fn create(rows: u16, cols: u16) -> Self {
         Snow {
-            snow: vec![vec![Cell::Empty; cols as usize]; rows as usize],
+            snow: vec![vec![Cell::Empty; cols as usize]; rows as usize + 1],
             rows: rows,
             cols: cols,
         }
@@ -128,7 +128,7 @@ impl Snow {
         }
 
         // float snowflakes down the screen
-        for row in (0..(self.rows - 1) as usize).rev() {
+        for row in (0..self.rows as usize).rev() {
             for col in 0..self.cols as usize {
                 let (from, to) = self.snow.split_at_mut(row + 1);
                 match get_action(from[row][col], col, &to[0]) {
@@ -149,15 +149,7 @@ impl Snow {
         // generate new snowflakes at the top
         for cell in self.snow.first_mut().unwrap() {
             if rng.gen_bool(1.0 / 500.0) {
-                match cell {
-                    Cell::Empty => {
-                        *cell = Cell::Flake(Snowflake::create(rng.gen_range(1, 4)), 0);
-                    }
-                    Cell::Flake(_, _) => (),
-                    Cell::Stack(height) => {
-                        *cell = Cell::Stack(u8::min(8, *height + 1));
-                    }
-                }
+                *cell = Cell::Flake(Snowflake::create(rng.gen_range(1, 4)), 0);
             }
         }
     }
@@ -166,7 +158,7 @@ impl Snow {
         for row in 0..self.rows {
             let mut line = Vec::with_capacity(self.cols as usize);
 
-            for cell in &self.snow[row as usize] {
+            for cell in &self.snow[row as usize + 1] {
                 match cell {
                     Cell::Empty => line.push(' '),
                     Cell::Flake(variant, _) => line.push(variant.get_char()),
