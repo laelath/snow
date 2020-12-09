@@ -149,7 +149,15 @@ impl Snow {
         // generate new snowflakes at the top
         for cell in self.snow.first_mut().unwrap() {
             if rng.gen_bool(1.0 / 500.0) {
-                *cell = Cell::Flake(Snowflake::create(rng.gen_range(1, 4)), 0);
+                match cell {
+                    Cell::Empty => {
+                        *cell = Cell::Flake(Snowflake::create(rng.gen_range(1, 4)), 0);
+                    }
+                    Cell::Flake(_, _) => (),
+                    Cell::Stack(height) => {
+                        *cell = Cell::Stack(u8::min(8, *height + 1));
+                    }
+                }
             }
         }
     }
