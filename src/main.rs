@@ -45,6 +45,8 @@ enum Action {
     Replace(Cell),
     Move(Snowflake, usize),
     Pile(u8, usize),
+    RandMove(Snowflake, usize),
+    RandPile(u8, usize),
 }
 
 struct Snow {
@@ -87,10 +89,22 @@ impl Snow {
                             Cell::Empty => Action::Move(variant, col),
                             Cell::Flake(_, _) => Action::Replace(Cell::Empty),
                             Cell::Stack(height) => {
-                                if col > 0 && (to[col - 1] == Cell::Empty) {
+                                if col > 0
+                                    && (to[col - 1] == Cell::Empty)
+                                    && (col == to.len() - 1 || to[col + 1] != Cell::Empty)
+                                {
                                     Action::Move(variant, col - 1)
-                                } else if col < to.len() - 1 && (to[col + 1] == Cell::Empty) {
+                                } else if col < to.len() - 1
+                                    && (to[col + 1] == Cell::Empty)
+                                    && (col == 0 || to[col - 1] != Cell::Empty)
+                                {
                                     Action::Move(variant, col + 1)
+                                } else if col > 0
+                                    && col < to.len() - 1
+                                    && to[col - 1] == Cell::Empty
+                                    && to[col + 1] == Cell::Empty
+                                {
+                                    Action::RandMove(variant, col)
                                 } else {
                                     let mut piles = [9, height, 9];
 
@@ -111,7 +125,9 @@ impl Snow {
                                         } else {
                                             Action::Replace(Cell::Stack(1))
                                         }
-                                    } else if piles[2] <= piles[0] {
+                                    } else if piles[0] == piles[2] {
+                                        Action::RandPile(piles[0] + 1, col)
+                                    } else if piles[2] < piles[0] {
                                         Action::Pile(piles[2] + 1, col + 1)
                                     } else {
                                         Action::Pile(piles[0] + 1, col - 1)
@@ -141,6 +157,24 @@ impl Snow {
                     Action::Pile(height, dest) => {
                         from[row][col] = Cell::Empty;
                         to[0][dest] = Cell::Stack(height);
+                    }
+                    Action::RandMove(variant, center) => {
+                        if rng.gen_bool(1.0 / 2.0) {
+                            from[row][col] = Cell::Empty;
+                            to[0][center - 1] = Cell::Flake(variant, rng.gen_range(1, 6));
+                        } else {
+                            from[row][col] = Cell::Empty;
+                            to[0][center + 1] = Cell::Flake(variant, rng.gen_range(1, 6));
+                        }
+                    }
+                    Action::RandPile(height, center) => {
+                        if rng.gen_bool(1.0 / 2.0) {
+                            from[row][col] = Cell::Empty;
+                            to[0][center - 1] = Cell::Stack(height);
+                        } else {
+                            from[row][col] = Cell::Empty;
+                            to[0][center + 1] = Cell::Stack(height);
+                        }
                     }
                 }
             }
